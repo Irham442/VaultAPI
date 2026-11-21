@@ -2,6 +2,7 @@ import importlib
 import sys
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -14,15 +15,28 @@ def api_client(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VAULTAPI_JWT_SECRET", "test-only-secret-" + "x" * 40)
     monkeypatch.setenv("VAULTAPI_ACCESS_TOKEN_MINUTES", "30")
-    for module_name in ("main", "auth_service", "database"):
+    monkeypatch.setenv(
+        "VAULTAPI_CREDENTIAL_ENCRYPTION_KEY",
+        Fernet.generate_key().decode("ascii"),
+    )
+    module_names = (
+        "main",
+        "routes.auth",
+        "routes.credentials",
+        "routes",
+        "auth_service",
+        "database",
+        "rate_limit",
+    )
+    for module_name in module_names:
         sys.modules.pop(module_name, None)
 
     app_module = importlib.import_module("main")
     with TestClient(app_module.app) as client:
         yield client
 
-    app_module.database.connection_obj.close()
-    for module_name in ("main", "auth_service", "database"):
+    sys.modules["database"].connection_obj.close()
+    for module_name in module_names:
         sys.modules.pop(module_name, None)
 
 
@@ -74,9 +88,9 @@ def test_bearer_dependency_returns_verified_integer_user_id(api_client):
         "/auth/login",
         json={"email": "ari@example.com", "password": "a-secure-pass"},
     )
-    import main
+    from routes import credentials as credential_routes
 
-    identity = main.get_current_user_id(
+    identity = credential_routes.get_current_user_id(
         HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=logged_in.json()["access_token"]
         )
@@ -85,15 +99,59 @@ def test_bearer_dependency_returns_verified_integer_user_id(api_client):
     assert isinstance(identity, int)
 
     with pytest.raises(HTTPException) as error:
-        main.get_current_user_id(
+        credential_routes.get_current_user_id(
             HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid")
         )
     assert error.value.status_code == 401
 
 
 def test_bearer_dependency_rejects_missing_token(api_client):
-    import main
+    from routes import credentials as credential_routes
 
     with pytest.raises(HTTPException) as error:
-        main.get_current_user_id(None)
+        credential_routes.get_current_user_id(None)
     assert error.value.status_code == 401
+
+
+def test_login_rate_limits_five_failed_attempts(api_client):
+    for attempt in range(4):
+        response = api_client.post(
+            "/auth/login",
+            json={"email": "nobody@example.com", "password": f"wrong-{attempt}"},
+        )
+        assert response.status_code == 401
+
+    fifth_attempt = api_client.post(
+        "/auth/login",
+        json={"email": "nobody@example.com", "password": "wrong-fifth"},
+    )
+    assert fifth_attempt.status_code == 429
+    assert int(fifth_attempt.headers["Retry-After"]) > 0
+
+    blocked_attempt = api_client.post(
+        "/auth/login",
+        json={"email": "nobody@example.com", "password": "anything"},
+    )
+    assert blocked_attempt.status_code == 429
+
+
+def test_successful_login_clears_failed_attempts(api_client):
+    api_client.post(
+        "/auth/register",
+        json={"username": "Ari", "email": "ari@example.com", "password": "a-secure-pass"},
+    )
+    for attempt in range(4):
+        assert api_client.post(
+            "/auth/login",
+            json={"email": "ari@example.com", "password": f"wrong-{attempt}"},
+        ).status_code == 401
+
+    assert api_client.post(
+        "/auth/login",
+        json={"email": "ari@example.com", "password": "a-secure-pass"},
+    ).status_code == 200
+
+    assert api_client.post(
+        "/auth/login",
+        json={"email": "ari@example.com", "password": "wrong-again"},
+    ).status_code == 401

@@ -1,5 +1,9 @@
 
 import sqlite3
+from credential_crypto import (
+    decrypt_credential_password,
+    encrypt_credential_password,
+)
 
 connection_obj = sqlite3.connect(
     "vault.db",
@@ -41,7 +45,8 @@ connection_obj.commit()
 print("Database is Ready!")
 
 def add_credential(user_id, service, username, password):
-    user_to_add = (user_id, service, username, password)
+    encrypted_password = encrypt_credential_password(password)
+    user_to_add = (user_id, service, username, encrypted_password)
 
     cursor_obj.execute(
         """
@@ -63,8 +68,11 @@ def get_credentials(user_id=None):
             (user_id,),
         )
     
-    data = cursor.fetchall()
-    return data
+    rows = cursor.fetchall()
+    return [
+        (*row[:-1], decrypt_credential_password(row[-1]))
+        for row in rows
+    ]
 
 def delete_credential(id, user_id=None):
     if user_id is None:
@@ -81,16 +89,17 @@ def delete_credential(id, user_id=None):
     return cursor_obj.rowcount
 
 def update_credential(credential_id, service, username, password, user_id=None):
+    encrypted_password = encrypt_credential_password(password)
     if user_id is None:
         cursor_obj.execute(
             "UPDATE credential SET service = ?, username = ?, password = ? WHERE id = ?",
-            (service, username, password, credential_id),
+            (service, username, encrypted_password, credential_id),
         )
     else:
         cursor_obj.execute(
             "UPDATE credential SET service = ?, username = ?, password = ? "
             "WHERE id = ? AND user_id = ?",
-            (service, username, password, credential_id, user_id),
+            (service, username, encrypted_password, credential_id, user_id),
         )
     connection_obj.commit()
     return cursor_obj.rowcount

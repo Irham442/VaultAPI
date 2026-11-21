@@ -12,13 +12,6 @@ VaultAPI is a credential management application built with Python, FastAPI, and 
 - Maintain proper foreign key relationships.
 - Avoid unnecessary dependencies.
 
-## Learning Guidelines
-- Explain important technical decisions.
-- Prefer incremental implementations.
-- Do not rewrite existing code without a good reason.
-- Explain new concepts before introducing complicated implementations.
-- Let me review the implementation before moving to the next feature.
-
 ## Working Rules
 - Inspect existing code before making changes.
 - Never assume an existing feature is incomplete without checking.

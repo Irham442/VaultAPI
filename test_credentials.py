@@ -41,6 +41,13 @@ def test_credential_crud_is_scoped_to_authenticated_user(api_client):
     assert user_b_credentials.status_code == 200
     assert len(user_a_credentials.json()) == 1
     assert user_a_credentials.json()[0][2] == "Mail"
+    import database
+
+    raw_password = database.connection_obj.execute(
+        "SELECT password FROM credential WHERE id = ?", (credential_id,)
+    ).fetchone()[0]
+    assert raw_password.startswith("enc:v1:")
+    assert "mail-pass" not in raw_password
     assert user_b_credentials.json() == []
     assert user_a_id != user_b_id
 
